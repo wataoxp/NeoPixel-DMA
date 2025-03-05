@@ -7,7 +7,7 @@
   ******************************************************************************
   * @attention
   *
-  * Copyright (c) 2024 STMicroelectronics.
+  * Copyright (c) 2025 STMicroelectronics.
   * All rights reserved.
   *
   * This software is licensed under terms that can be found in the LICENSE file
@@ -72,11 +72,17 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define RESET_Pin LL_GPIO_PIN_14
-#define RESET_GPIO_Port GPIOC
 #define IR_Pin LL_GPIO_PIN_3
 #define IR_GPIO_Port GPIOA
 #define IR_EXTI_IRQn EXTI2_3_IRQn
+#define DO_Pin LL_GPIO_PIN_4
+#define DO_GPIO_Port GPIOA
+#define DI_Pin LL_GPIO_PIN_5
+#define DI_GPIO_Port GPIOA
+#define SK_Pin LL_GPIO_PIN_6
+#define SK_GPIO_Port GPIOA
+#define CS_Pin LL_GPIO_PIN_7
+#define CS_GPIO_Port GPIOA
 
 /* USER CODE BEGIN Private defines */
 

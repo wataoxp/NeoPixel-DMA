@@ -4,101 +4,193 @@
  *  Created on: Dec 5, 2024
  *      Author: wataoxp
  */
-#include "main.h"
-
-#include "ll_dma.h"
-#include "neopixel.h"
 #include "control.h"
 
+#include "i2c.h"
+#include "so1602.h"
+#include <string.h>
+#include <stdio.h>
+
 typedef enum{
-	LuxDown = 0,
-	LuxUp = 1,
-	ColorRed = 4,
-	ColorGreen = 5,
-	ColorBlue = 6,
-	ColorRainbow = 7,
-	ShiftVerySlow = 11,
-	ShiftSlow = 15,
-	ShiftFast = 19,
-	ShiftVeryFast = 23,
+	ColorRainbow = 0x00,
+	ColorRed = 0x01,
+	ColorGreen = 0x02,
+	ColorBlue = 0x03,
+	ColorNeon = 0x04,
+
+	ColorPoint = 0x07,
+
+	SpeedUp = 0x0A,
+	SpeedDown = 0x0B,
+	LuxDown = 0x0C,
+	LuxUp = 0x0D,
+
+	LCDView = 0x10,
+
+	ShiftUp = 0x80,
+	ShiftDown = 0x81,
+
+	Submit = 0x18,
 }ControlerButton;
 
-void TimHanldeSet(TIM_HandlePack *Tims)
+static uint8_t RemoteKeyArray[] = {
+		ColorRainbow,ColorRed,ColorGreen,ColorBlue,ColorNeon,SpeedUp,SpeedDown,
+		LuxDown,LuxUp,ShiftUp,ShiftDown,
+		LCDView,Submit,
+};
+
+static PatternTypedef OldParam;
+
+static inline uint8_t MinValue(uint8_t val,uint8_t min)
 {
-	/* Sleep 1ms Counter */
-	LL_TIM_ClearFlag_UPDATE(Tims->SleepTimer);
-	/* Remote 1us Counter */
-	LL_TIM_EnableCounter(Tims->RemoteCounter);
-	/* Remote DisableIR 1ms Counter */
-	LL_TIM_ClearFlag_UPDATE(Tims->StopTimerIR);
+	if(val > min)
+	{
+		return 1;
+	}
+	else
+	{
+		return 0;
+	}
+}
+static inline uint8_t MaxValue(uint8_t val,uint8_t max)
+{
+	if(val < max)
+	{
+		return 1;
+	}
+	else
+	{
+		return 0;
+	}
+}
+uint8_t CheckParam(PatternTypedef *param)	//起動時のデータと同じ(countが0)であれば書き込まない
+{
+	uint8_t count = (OldParam.Lux ^ param->Lux) || (OldParam.Type ^ param->Type) ||
+					(OldParam.Time ^ param->Time) || (OldParam.Shift ^ param->Shift);
+
+	return count;
+}
+void ControlE2ROM(PatternTypedef *param,uint8_t mode)
+{
+	uint8_t buf[4];
+
+	if(mode == Writemode)
+	{
+		buf[0] = param->Lux;
+		buf[1] = param->Type;
+		buf[2] = param->Time;
+		buf[3] = param->Shift;
+
+		SetNewData(buf);
+	}
+	else if(mode == Readmode)
+	{
+		GetNewData(buf);
+		OldParam.Lux = param->Lux = buf[0];
+		OldParam.Type = param->Type = buf[1];
+		OldParam.Time = param->Time = buf[2];
+		OldParam.Shift = param->Shift = buf[3];
+	}
+}
+uint8_t CheckKey(uint8_t command,uint8_t inverse)
+{
+	uint8_t i = 0;
+	uint8_t ret = mismatch;
+
+	if((command ^ 0xFF) == inverse)
+	{
+		while(i < sizeof(RemoteKeyArray))
+		{
+			if(command == RemoteKeyArray[i])
+			{
+				ret = match;
+				break;
+			}
+			i++;
+		}
+	}
+	return ret;
 }
 void Sleep(TIM_TypeDef *TIMx,uint8_t time)
 {
-	LL_TIM_SetAutoReload(TIMx,time);
+	LL_TIM_SetAutoReload(TIMx,((time * 50)-1));
 	LL_TIM_EnableIT_UPDATE(TIMx);
 	LL_TIM_EnableCounter(TIMx);
 
 	__WFI();
 
-	while(LL_TIM_IsActiveFlag_UPDATE(TIMx) == 0);	//wait TIM14interrupt
+	while(LL_TIM_IsActiveFlag_UPDATE(TIMx) == 0);	//wait TIMxinterrupt
 	LL_TIM_ClearFlag_UPDATE(TIMx);
 	LL_TIM_DisableCounter(TIMx);
 }
-void BeginSPItoDMA(SPI_TypeDef *SPIx,DMA_TypeDef *DMAx,uint32_t Channel,uint8_t *bufferAddress)
+/* LCD出力、テスト用 */
+static uint32_t ValidLCD = 0;
+uint32_t ReturnFlag(void)
 {
-	InterruptSetDMA(DMAx, Channel);
-	EnableSPItoDMA(SPIx);
-	InitSPItoDMA(DMAx, Channel, SPIx, bufferAddress);
-}
-void BeginMEMtoMEM(DMA_TypeDef *DMAx,uint32_t Channel,uint8_t *bufferAddress)
-{
-	InterruptSetDMA(DMAx, Channel);
-	InitMemtoMem(DMAx, Channel, (bufferAddress+24), bufferAddress);
+	return ValidLCD;
 }
 void RemoteToNeoPixel(PatternTypedef *Param,uint8_t command)
 {
+	Param->OldCommand = command;
+	if(command < ColorPoint)
+	{
+		Param->Type = command;
+		return;
+	}
 	switch(command)
 	{
-	case LuxDown:
-		Param->Lux = (Param->Lux > 0)? Param->Lux-1:0;
-		break;
 	case LuxUp:
-		Param->Lux = (Param->Lux <= 8)? Param->Lux+1:8;
+		Param->Lux += MaxValue(Param->Lux, 8);
 		break;
-	case ColorRed:
-		Param->Type = Red;
+	case LuxDown:
+		Param->Lux -= MinValue(Param->Lux, 0);
 		break;
-	case ColorGreen:
-		Param->Type = Green;
+	case SpeedUp:
+		Param->Time -= MinValue(Param->Time, VeryFast);
 		break;
-	case ColorBlue:
-		Param->Type = Blue;
+	case SpeedDown:
+		Param->Time += MaxValue(Param->Time, VerySlow);
 		break;
-	case ColorRainbow:
-		Param->Type = Rainbow;
+	case ShiftUp:
+		Param->Shift <<= MaxValue(Param->Shift, 32);
 		break;
-	case ShiftVerySlow:
-		Param->Shift = VerySlow;
+	case ShiftDown:
+		Param->Shift >>= MinValue(Param->Shift, 1);
 		break;
-	case ShiftSlow:
-		Param->Shift = Slow;
+	case LCDView:
+		if(!ValidLCD) SO1602_Init(I2C2);
+		ValidLCD = 1;
 		break;
-	case ShiftFast:
-		Param->Shift = Fast;
-		break;
-	case ShiftVeryFast:
-		Param->Shift = VeryFast;
-		break;
-	case 20:
-		Param->time = 50;
-		break;
-	case 21:
-		Param->time = 100;
-		break;
-	case 22:
-		Param->time = 200;
+	case Submit:
+		if(ValidLCD) LCD_E2ROM(Param, I2C2);
 		break;
 	default:
 		break;
 	}
+}
+void LCD_E2ROM(PatternTypedef *Param,I2C_TypeDef *I2Cx)
+{
+	char Message[16];
+	char AsciStr[3];
+	uint8_t AsciPage;
+
+	AsciPage = GetPage() - 1;
+	ControlE2ROM(Param, Readmode);		//ここでROMのデータに上書きされちゃうけどね
+
+	AsciStr[0] = (AsciPage / 10) + '0';
+	AsciStr[1] = (AsciPage % 10) + '0';
+	AsciStr[2] = '\0';
+
+	SetCusor(I2Cx, 0, 0);
+
+	sprintf(Message,"%s,%X,%X,%X,%X",AsciStr,Param->Lux,Param->Type,Param->Time,Param->Shift);
+	StringLCD(I2Cx, Message, strlen(Message));
+}
+void LCD_IR(ConvertMSB *MSB,I2C_TypeDef *I2Cx)
+{
+	char Message[16];
+
+	SetCusor(I2Cx, 0, 1);
+	sprintf(Message,"%X,%X,%X,%X",MSB->bit8,MSB->bit16,MSB->bit24,MSB->bit31);
+	StringLCD(I2Cx, Message, strlen(Message));
 }

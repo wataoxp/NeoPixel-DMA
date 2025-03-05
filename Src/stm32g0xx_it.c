@@ -6,7 +6,7 @@
   ******************************************************************************
   * @attention
   *
-  * Copyright (c) 2024 STMicroelectronics.
+  * Copyright (c) 2025 STMicroelectronics.
   * All rights reserved.
   *
   * This software is licensed under terms that can be found in the LICENSE file
@@ -23,7 +23,6 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "IRremote.h"
-#include <stddef.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -43,6 +42,7 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN PV */
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -52,13 +52,16 @@
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
 
 /* USER CODE BEGIN EV */
-volatile uint8_t ErrFlag;
-
+static void ErrorHandle(void)
+{
+	while(1);
+}
 /* USER CODE END EV */
 
 /******************************************************************************/
@@ -153,7 +156,7 @@ void EXTI2_3_IRQHandler(void)
   {
     LL_EXTI_ClearFallingFlag_0_31(LL_EXTI_LINE_3);
     /* USER CODE BEGIN LL_EXTI_LINE_3_FALLING */
-    RecieveIR_IT(TIM16, NULL, NULL, Save);
+    RecieveIR_IT();
     /* USER CODE END LL_EXTI_LINE_3_FALLING */
   }
   /* USER CODE BEGIN EXTI2_3_IRQn 1 */
@@ -169,11 +172,11 @@ void DMA1_Channel1_IRQHandler(void)
   /* USER CODE BEGIN DMA1_Channel1_IRQn 0 */
 	if(LL_DMA_IsActiveFlag_TE1(DMA1))
 	{
-		ErrFlag = 1;
+		LL_DMA_ClearFlag_TE1(DMA1);
+		ErrorHandle();
 	}
 
   /* USER CODE END DMA1_Channel1_IRQn 0 */
-
   /* USER CODE BEGIN DMA1_Channel1_IRQn 1 */
 
   /* USER CODE END DMA1_Channel1_IRQn 1 */
@@ -185,13 +188,13 @@ void DMA1_Channel1_IRQHandler(void)
 void DMA1_Channel2_3_IRQHandler(void)
 {
   /* USER CODE BEGIN DMA1_Channel2_3_IRQn 0 */
-	if(LL_DMA_IsActiveFlag_TE1(DMA1))
+	if(LL_DMA_IsActiveFlag_TE2(DMA1))
 	{
-		ErrFlag = 2;
+		LL_DMA_ClearFlag_TE2(DMA1);
+		ErrorHandle();
 	}
 
   /* USER CODE END DMA1_Channel2_3_IRQn 0 */
-
   /* USER CODE BEGIN DMA1_Channel2_3_IRQn 1 */
 
   /* USER CODE END DMA1_Channel2_3_IRQn 1 */
@@ -203,11 +206,27 @@ void DMA1_Channel2_3_IRQHandler(void)
 void TIM14_IRQHandler(void)
 {
   /* USER CODE BEGIN TIM14_IRQn 0 */
+	LL_TIM_ClearFlag_UPDATE(TIM14);
+	LL_TIM_DisableIT_UPDATE(TIM14);
+	EnableIR();
 
   /* USER CODE END TIM14_IRQn 0 */
   /* USER CODE BEGIN TIM14_IRQn 1 */
-	LL_TIM_DisableIT_UPDATE(TIM14);
+
   /* USER CODE END TIM14_IRQn 1 */
+}
+
+/**
+  * @brief This function handles TIM17 global interrupt.
+  */
+void TIM17_IRQHandler(void)
+{
+  /* USER CODE BEGIN TIM17_IRQn 0 */
+	LL_TIM_DisableIT_UPDATE(TIM17);
+  /* USER CODE END TIM17_IRQn 0 */
+  /* USER CODE BEGIN TIM17_IRQn 1 */
+
+  /* USER CODE END TIM17_IRQn 1 */
 }
 
 /* USER CODE BEGIN 1 */

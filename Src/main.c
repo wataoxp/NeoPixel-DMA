@@ -6,7 +6,7 @@
   ******************************************************************************
   * @attention
   *
-  * Copyright (c) 2024 STMicroelectronics.
+  * Copyright (c) 2025 STMicroelectronics.
   * All rights reserved.
   *
   * This software is licensed under terms that can be found in the LICENSE file
@@ -25,24 +25,25 @@
 #include "ll_dma.h"
 #include "IRremote.h"
 #include "control.h"
-#include <stdio.h>
-#include <string.h>
-
-#include "lcd.h"
+#include "s93c46.h"
+#include "eeprom.h"
+#include "gpio.h"
+#include "exti.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+//#define FIRST_DATA_WRITE
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-#define DEBUG_ONLY
+
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -55,23 +56,61 @@
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
+static void MX_I2C2_Init(void);
 static void MX_SPI1_Init(void);
-static void MX_TIM16_Init(void);
 static void MX_TIM14_Init(void);
 static void MX_TIM17_Init(void);
-static void MX_I2C2_Init(void);
 /* USER CODE BEGIN PFP */
-
+static void EXTI_Config(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-/* DMA Transfer Error Check */
-
-extern volatile uint8_t ErrFlag;
-
 /* NeoPixel Data Buffer */
 uint8_t NeoPixelBuffer[NEOPIXEL_BUFFER_SIZE] = {0};
+/* LED Parameter */
+static PatternTypedef Param = {
+		.Lux = 4,
+		.Type = Rainbow,
+		.Shift = 1,
+		.Time = Fast,
+		.OldCommand = 0xFF,
+};
+static void EXTI_Config(void)
+{
+	LL_EXTI_InitTypeDef init;
+	init.Line_0_31 = LL_EXTI_LINE_0;
+	init.Mode = LL_EXTI_MODE_IT;
+	init.Trigger = LL_EXTI_TRIGGER_FALLING;
+
+	__NVIC_SetPriority(EXTI0_1_IRQn, 0);
+	__NVIC_EnableIRQ(EXTI0_1_IRQn);
+
+	LL_EXTI_SetEXTISource(PORTA, LL_EXTI_CONFIG_LINE0);
+	EXTI_Init(&init);
+
+	GPIO_SetPinPull(GPIOA, Pin0, LL_GPIO_PULL_NO);
+	GPIO_SetPinMode(GPIOA, Pin0, LL_GPIO_MODE_INPUT);
+}
+void EXTI0_1_IRQHandler(void)
+{
+	static __IO uint32_t RomFlag = SET;
+
+	__disable_irq();
+	if(LL_EXTI_IsActiveFallingFlag_0_31(LL_EXTI_LINE_0) != RESET)
+	{
+		LL_EXTI_ClearFallingFlag_0_31(LL_EXTI_LINE_0);
+		if(RomFlag == SET)
+		{
+			RomFlag = RESET;
+			if(CheckParam(&Param))
+			{
+				ControlE2ROM(&Param, Writemode);
+			}
+		}
+	}
+	__enable_irq();
+}
 /* USER CODE END 0 */
 
 /**
@@ -80,39 +119,39 @@ uint8_t NeoPixelBuffer[NEOPIXEL_BUFFER_SIZE] = {0};
   */
 int main(void)
 {
+
   /* USER CODE BEGIN 1 */
 	/* RGB Setting Struct */
-	static NeoPixelTypedef pixel[NUM_LED] = {0};
+	NeoPixelTypedef pixel[NUM_LED] = {0};
 	/* Hue */
 	uint16_t HueArray[NUM_LED] = {0};
 
-	/* LED Parameter */
-	PatternTypedef Param = {
-			.Lux = 4,
-			.Type = Rainbow,
-			.Shift = VerySlow,
-			.time = 100,
-			.OldCommand = 0xFF,
-	};
-
 	/* Remote Data Decode */
-	static ConvertLSB LSB = {0};
+	ConvertMSB MSB = {0};
 	uint32_t Binary = 0;
 	uint8_t Flag = IR_DECODE_READY;
+	IR_Parameter IR;
 
 	/* TIM Handler */
-	static TIM_HandlePack Handler = {
-			.SleepTimer = TIM14,
-			.RemoteCounter = TIM16,
-			.StopTimerIR = TIM17,
-	};
-#ifdef DEBUG_ONLY
-	/* Check Remote Data */
-	char bit8[5];
-	char bit16[5];
-	char bit24[5];
-	char bit31[5];
-#endif
+	TIM_TypeDef *IRcounter = TIM14;
+	TIM_TypeDef *SleepTimer = TIM17;
+
+	/* EEPROM */
+	S93C46_Typedef MicroWire;
+
+	/* InitStruct */
+	IR.Binary = &Binary;
+	IR.ExtiLine = LL_EXTI_LINE_3;
+	IR.Flag = &Flag;
+	IR.IRQnumber = EXTI2_3_IRQn;
+	IR.TIM = IRcounter;
+
+	MicroWire.PortCS = MicroWire.PortDI = MicroWire.PortDO = MicroWire.PortSK = GPIOA;
+	MicroWire.CS = 1 << 7;
+	MicroWire.SK = 1 << 6;
+	MicroWire.DI = 1 << 5;
+	MicroWire.DO = 1 << 4;
+
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -138,33 +177,42 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA_Init();
+  MX_I2C2_Init();
   MX_SPI1_Init();
-  MX_TIM16_Init();
   MX_TIM14_Init();
   MX_TIM17_Init();
-  MX_I2C2_Init();
   /* USER CODE BEGIN 2 */
+	/* Sleep Config */
+	LL_LPM_EnableSleep();
+	LL_TIM_ClearFlag_UPDATE(SleepTimer);
+	/* DMA Setting */
+	InitSPItoDMA(SPI1, DMA1, LL_DMA_CHANNEL_1, NeoPixelBuffer);
+	InitMEMtoMEM(DMA1, LL_DMA_CHANNEL_2, NeoPixelBuffer);
 
-  /* All Handle SetUp */
-  TimHanldeSet(&Handler);
+	/* Remote SetUp */
+	SetISR(&IR);
+	LL_TIM_EnableCounter(IRcounter);
 
-  /* Select SleepMode */
-  LL_LPM_EnableSleep();
+	/* EEPROM SetUp */
+	SetHandle(&MicroWire);
 
-  /* DMA Setting */
-  BeginSPItoDMA(SPI1, DMA1, LL_DMA_CHANNEL_1, NeoPixelBuffer);
+	/* Exti Init */
+	EXTI_Config();
 
-  /* Make Data NeoPixel*/
-  InitNeoPixel(pixel, &Param, NeoPixelBuffer, HueArray);
-
-  /* MEMtoMEM Config */
-  BeginMEMtoMEM(DMA1, LL_DMA_CHANNEL_2, NeoPixelBuffer);
-
-  /* Remote SetUp */
-  RecieveIR_IT(Handler.RemoteCounter, &Binary, &Flag, Init);
-#ifdef DEBUG_ONLY
-  LCDInit(I2C2, RESET_GPIO_Port, RESET_Pin);
+	/* EEPROM Access */
+	__disable_irq();
+#ifdef FIRST_DATA_WRITE
+	ControlE2ROM(&Param, Writemode);
+#else
+	/* Get Current LEDdata */
+	GetNewPage();
+	ControlE2ROM(&Param, Readmode);
 #endif
+	__enable_irq();
+
+	/* LoadData to NeoPixel */
+	InitNeoPixel(pixel, &Param, NeoPixelBuffer, HueArray);
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -174,81 +222,26 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	if(LL_TIM_IsActiveFlag_UPDATE(Handler.StopTimerIR))
-	{
-		LL_TIM_ClearFlag_UPDATE(Handler.StopTimerIR);
-		LL_TIM_DisableCounter(Handler.StopTimerIR);
-		LL_EXTI_EnableIT_0_31(LL_EXTI_LINE_3);
-		__NVIC_EnableIRQ(EXTI2_3_IRQn);
-	}
-
-	if(Flag == IR_DECODE_READY)
-	{
-		ShiftPixel(DMA1, LL_DMA_CHANNEL_2, NeoPixelBuffer);
-	}
-	else
+	StartSPItoDMA(DMA1, LL_DMA_CHANNEL_1, SPI1, NEOPIXEL_BUFFER_SIZE);
+	ShiftPixel(DMA1, LL_DMA_CHANNEL_2, NeoPixelBuffer);
+	if(Flag != IR_DECODE_READY)
 	{
 		if(Flag == IR_ACK)
 		{
-			BinaryToHex(&LSB, Binary);
-
-//			if((LSB.bit24 ^ 0xFF) != LSB.bit31)
-//			{
-//				LSB.bit24 = IR_ERROR_DATA;
-//			}
-			RemoteToNeoPixel(&Param, LSB.bit24);
-
-			//if(LSB.bit24 != IR_ERROR_DATA)
-			if((LSB.bit24 ^ 0xFF) == LSB.bit31)
+			BinaryToHex(&MSB, Binary);
+			if(ReturnFlag()) LCD_IR(&MSB, I2C2);
+			if(CheckKey(MSB.bit24,MSB.bit31) == match)
 			{
+				RemoteToNeoPixel(&Param, MSB.bit24);
 				InitNeoPixel(pixel, &Param, NeoPixelBuffer, HueArray);
-				Param.OldCommand = LSB.bit24;
-
-#ifdef DEBUG_ONLY
-				sprintf(bit8,"%X",LSB.bit8);
-				sprintf(bit16,"%X",LSB.bit16);
-				sprintf(bit24,"%X",LSB.bit24);
-				sprintf(bit31,"%X",LSB.bit31);
-
-				ClearLCD(I2C2);
-				StringLCD(I2C2, bit8, strlen(bit8));
-				SetCusor(I2C2, 4, 0);
-				StringLCD(I2C2, bit16, strlen(bit16));
-
-				SetCusor(I2C2, 0, 1);
-				StringLCD(I2C2, bit24, strlen(bit24));
-				SetCusor(I2C2, 4, 1);
-				StringLCD(I2C2, bit31, strlen(bit31));
-#endif
-				memset(&LSB,0,sizeof(LSB));
-				Binary = 0;
 			}
-		}
-		else if(Flag == IR_REPEAT)
-		{
-			RemoteToNeoPixel(&Param, Param.OldCommand);
-			InitNeoPixel(pixel, &Param, NeoPixelBuffer, HueArray);
+			DataReset(&MSB, &Binary);
 		}
 		Flag = IR_DECODE_READY;
 	}
-	SPI_Transfer_DMA(DMA1, LL_DMA_CHANNEL_1, SPI1, NEOPIXEL_BUFFER_SIZE);
-	Sleep(Handler.SleepTimer,Param.time);
-	if(ErrFlag)
-	{
-		while(1);
-	}
-	do
-	{
-		;
-	}while(!(LL_DMA_IsActiveFlag_TC1(DMA1)) && !(LL_DMA_IsActiveFlag_TC2(DMA1)));
-
-	LL_DMA_ClearFlag_TC1(DMA1);
-	LL_DMA_ClearFlag_TC2(DMA1);
-
-	StopDMA(DMA1, LL_DMA_CHANNEL_1);
-	StopDMA(DMA1, LL_DMA_CHANNEL_2);
-
-  }//while
+	Sleep(SleepTimer, Param.Time);
+	StopDMA(DMA1, LL_DMA_CHANNEL_1, LL_DMA_CHANNEL_2);
+  }
   /* USER CODE END 3 */
 }
 
@@ -342,7 +335,7 @@ static void MX_I2C2_Init(void)
   /** I2C Initialization
   */
   I2C_InitStruct.PeripheralMode = LL_I2C_MODE_I2C;
-  I2C_InitStruct.Timing = 0x00602173;
+  I2C_InitStruct.Timing = 0x00C12166;
   I2C_InitStruct.AnalogFilter = LL_I2C_ANALOGFILTER_ENABLE;
   I2C_InitStruct.DigitalFilter = 0;
   I2C_InitStruct.OwnAddress1 = 0;
@@ -435,7 +428,7 @@ static void MX_SPI1_Init(void)
   SPI_InitStruct.CRCPoly = 7;
   LL_SPI_Init(SPI1, &SPI_InitStruct);
   LL_SPI_SetStandard(SPI1, LL_SPI_PROTOCOL_MOTOROLA);
-  LL_SPI_EnableNSSPulseMgt(SPI1);
+  LL_SPI_DisableNSSPulseMgt(SPI1);
   /* USER CODE BEGIN SPI1_Init 2 */
 
   /* USER CODE END SPI1_Init 2 */
@@ -460,54 +453,21 @@ static void MX_TIM14_Init(void)
   LL_APB2_GRP1_EnableClock(LL_APB2_GRP1_PERIPH_TIM14);
 
   /* TIM14 interrupt Init */
-  NVIC_SetPriority(TIM14_IRQn, 0);
+  NVIC_SetPriority(TIM14_IRQn, 1);
   NVIC_EnableIRQ(TIM14_IRQn);
 
   /* USER CODE BEGIN TIM14_Init 1 */
 
   /* USER CODE END TIM14_Init 1 */
-  TIM_InitStruct.Prescaler = 63999;
+  TIM_InitStruct.Prescaler = 639;
   TIM_InitStruct.CounterMode = LL_TIM_COUNTERMODE_UP;
-  TIM_InitStruct.Autoreload = 199;
+  TIM_InitStruct.Autoreload = 10999;
   TIM_InitStruct.ClockDivision = LL_TIM_CLOCKDIVISION_DIV1;
   LL_TIM_Init(TIM14, &TIM_InitStruct);
   LL_TIM_DisableARRPreload(TIM14);
   /* USER CODE BEGIN TIM14_Init 2 */
 
   /* USER CODE END TIM14_Init 2 */
-
-}
-
-/**
-  * @brief TIM16 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM16_Init(void)
-{
-
-  /* USER CODE BEGIN TIM16_Init 0 */
-
-  /* USER CODE END TIM16_Init 0 */
-
-  LL_TIM_InitTypeDef TIM_InitStruct = {0};
-
-  /* Peripheral clock enable */
-  LL_APB2_GRP1_EnableClock(LL_APB2_GRP1_PERIPH_TIM16);
-
-  /* USER CODE BEGIN TIM16_Init 1 */
-
-  /* USER CODE END TIM16_Init 1 */
-  TIM_InitStruct.Prescaler = 63;
-  TIM_InitStruct.CounterMode = LL_TIM_COUNTERMODE_UP;
-  TIM_InitStruct.Autoreload = 65535;
-  TIM_InitStruct.ClockDivision = LL_TIM_CLOCKDIVISION_DIV1;
-  TIM_InitStruct.RepetitionCounter = 0;
-  LL_TIM_Init(TIM16, &TIM_InitStruct);
-  LL_TIM_DisableARRPreload(TIM16);
-  /* USER CODE BEGIN TIM16_Init 2 */
-
-  /* USER CODE END TIM16_Init 2 */
 
 }
 
@@ -528,12 +488,16 @@ static void MX_TIM17_Init(void)
   /* Peripheral clock enable */
   LL_APB2_GRP1_EnableClock(LL_APB2_GRP1_PERIPH_TIM17);
 
+  /* TIM17 interrupt Init */
+  NVIC_SetPriority(TIM17_IRQn, 1);
+  NVIC_EnableIRQ(TIM17_IRQn);
+
   /* USER CODE BEGIN TIM17_Init 1 */
 
   /* USER CODE END TIM17_Init 1 */
   TIM_InitStruct.Prescaler = 63999;
   TIM_InitStruct.CounterMode = LL_TIM_COUNTERMODE_UP;
-  TIM_InitStruct.Autoreload = 99;
+  TIM_InitStruct.Autoreload = 199;
   TIM_InitStruct.ClockDivision = LL_TIM_CLOCKDIVISION_DIV1;
   TIM_InitStruct.RepetitionCounter = 0;
   LL_TIM_Init(TIM17, &TIM_InitStruct);
@@ -582,10 +546,10 @@ static void MX_DMA_Init(void)
 
   /* DMA interrupt init */
   /* DMA1_Channel1_IRQn interrupt configuration */
-  NVIC_SetPriority(DMA1_Channel1_IRQn, 0);
+  NVIC_SetPriority(DMA1_Channel1_IRQn, 1);
   NVIC_EnableIRQ(DMA1_Channel1_IRQn);
   /* DMA1_Channel2_3_IRQn interrupt configuration */
-  NVIC_SetPriority(DMA1_Channel2_3_IRQn, 0);
+  NVIC_SetPriority(DMA1_Channel2_3_IRQn, 1);
   NVIC_EnableIRQ(DMA1_Channel2_3_IRQn);
 
 }
@@ -603,19 +567,16 @@ static void MX_GPIO_Init(void)
 /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
-  LL_IOP_GRP1_EnableClock(LL_IOP_GRP1_PERIPH_GPIOC);
   LL_IOP_GRP1_EnableClock(LL_IOP_GRP1_PERIPH_GPIOA);
 
   /**/
-  LL_GPIO_ResetOutputPin(RESET_GPIO_Port, RESET_Pin);
+  LL_GPIO_ResetOutputPin(DI_GPIO_Port, DI_Pin);
 
   /**/
-  GPIO_InitStruct.Pin = RESET_Pin;
-  GPIO_InitStruct.Mode = LL_GPIO_MODE_OUTPUT;
-  GPIO_InitStruct.Speed = LL_GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_PUSHPULL;
-  GPIO_InitStruct.Pull = LL_GPIO_PULL_NO;
-  LL_GPIO_Init(RESET_GPIO_Port, &GPIO_InitStruct);
+  LL_GPIO_ResetOutputPin(SK_GPIO_Port, SK_Pin);
+
+  /**/
+  LL_GPIO_ResetOutputPin(CS_GPIO_Port, CS_Pin);
 
   /**/
   LL_EXTI_SetEXTISource(LL_EXTI_CONFIG_PORTA, LL_EXTI_CONFIG_LINE3);
@@ -633,8 +594,38 @@ static void MX_GPIO_Init(void)
   /**/
   LL_GPIO_SetPinMode(IR_GPIO_Port, IR_Pin, LL_GPIO_MODE_INPUT);
 
+  /**/
+  GPIO_InitStruct.Pin = DO_Pin;
+  GPIO_InitStruct.Mode = LL_GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = LL_GPIO_PULL_NO;
+  LL_GPIO_Init(DO_GPIO_Port, &GPIO_InitStruct);
+
+  /**/
+  GPIO_InitStruct.Pin = DI_Pin;
+  GPIO_InitStruct.Mode = LL_GPIO_MODE_OUTPUT;
+  GPIO_InitStruct.Speed = LL_GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_PUSHPULL;
+  GPIO_InitStruct.Pull = LL_GPIO_PULL_NO;
+  LL_GPIO_Init(DI_GPIO_Port, &GPIO_InitStruct);
+
+  /**/
+  GPIO_InitStruct.Pin = SK_Pin;
+  GPIO_InitStruct.Mode = LL_GPIO_MODE_OUTPUT;
+  GPIO_InitStruct.Speed = LL_GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_PUSHPULL;
+  GPIO_InitStruct.Pull = LL_GPIO_PULL_NO;
+  LL_GPIO_Init(SK_GPIO_Port, &GPIO_InitStruct);
+
+  /**/
+  GPIO_InitStruct.Pin = CS_Pin;
+  GPIO_InitStruct.Mode = LL_GPIO_MODE_OUTPUT;
+  GPIO_InitStruct.Speed = LL_GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_PUSHPULL;
+  GPIO_InitStruct.Pull = LL_GPIO_PULL_NO;
+  LL_GPIO_Init(CS_GPIO_Port, &GPIO_InitStruct);
+
   /* EXTI interrupt init*/
-  NVIC_SetPriority(EXTI2_3_IRQn, 0);
+  NVIC_SetPriority(EXTI2_3_IRQn, 1);
   NVIC_EnableIRQ(EXTI2_3_IRQn);
 
 /* USER CODE BEGIN MX_GPIO_Init_2 */
