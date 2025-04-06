@@ -16,7 +16,7 @@
  * */
 #define NUM_LED 60
 //SPI送信バッファ用
-#define RESET_PULSE 1
+#define RESET_PULSE 10
 #define NEOPIXEL_BUFFER_SIZE (NUM_LED * 24 + RESET_PULSE)
 
 //NeoPixInit用
