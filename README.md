@@ -12,7 +12,7 @@ NeoPixel(WS2812B)をDMAで制御するプログラムです。
 * SPI&DMAが基本となっています。
 2025-04-08  
 より柔軟なクロックを設定できるPWM出力の設定も追加しました。
-PWM_DMAの各ヘッダ、ソースをそのままinc、srcに上書きしてください。
+PWM_DMAの各ヘッダ、ソースをそのままinc、srcに上書きしてください。  
 ※i2cおよびso1602ファイルはテスト用のLCD表示プログラムです。  
 main.cの232行目あたりの「if(ReturnFlag()) LCD_IR(&MSB, I2C2);」
 およびcontrol.cの160行目あたりの「case LCDView:」「case Submit:」の処理にのみ使用しています。  
