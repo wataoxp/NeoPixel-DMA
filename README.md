@@ -16,7 +16,7 @@ NeoPixel(WS2812B)をDMAで制御するプログラムです。
 PWM_DMAの各ヘッダ、ソースをそのままinc、srcに上書きしてください。  
   
 ※i2cおよびso1602ファイルはテスト用のLCD表示プログラムです。  
-main.cの232行目あたりの「if(ReturnFlag()) LCD_IR(&MSB, I2C2);」
+main.cの232行目あたりの「if(ReturnFlag()) LCD_IR(&MSB, I2C2);」  
 およびcontrol.cの160行目あたりの「case LCDView:」「case Submit:」の処理にのみ使用しています。  
 
 Edited File
