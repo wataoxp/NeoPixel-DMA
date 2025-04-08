@@ -23,8 +23,8 @@
 #define HUE_SHIFT 4
 
 //SPI HIビット数
-#define NeoPixel_HIGH 0xF0
-#define NeoPixel_LOW 0x80
+#define NeoPixel_HIGH 0xF8		//625ns,T1H
+#define NeoPixel_LOW 0xC0		//250ns,T0H
 
 //ShiftPixelフラグ用
 #define PIXEL_MOVE_SHIFT 3
@@ -32,15 +32,14 @@
 //HSV変換用固定小数
 /*
  * Hueが1変化するごとにRGBは255/60ずつ変化する。
- * (255/60)*2^4=68
- * 2^4は(255/60)との乗算の結果が「整数」になる最小の数値。
- * 追記:最小の値は2^3だぞ
+ * (255/60)*2^3=34
+ * 2^3は(255/60)との乗算の結果が「整数」になる最小の数値。
  * 
- * 上記の式に演算したい乗数を掛けた後に、16で割る(右4シフト)
+ * 上記の式に演算したい乗数を掛けた後に、8で割る(右3シフト)
  * 今回の場合は(68*Hue)>>4によって小数と整数の疑似的な乗算ができる。
  */
-#define HUE_FIXEDPOINT 68
-#define POINT_SHIFT 4
+#define HUE_FIXEDPOINT 34
+#define POINT_SHIFT 3
 
 //STMはリトルエンディアン。なのでメモリ上では以下の順番でgrbの順となる
 typedef struct{
